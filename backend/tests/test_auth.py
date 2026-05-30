@@ -12,6 +12,7 @@ from datetime import timedelta
 import pytest
 from fastapi.testclient import TestClient
 
+from models import User
 from security import create_access_token
 
 # ---------------------------------------------------------------------------
@@ -37,37 +38,26 @@ class TestSignUp:
         assert response.status_code == 409
         assert "already registered" in response.json()["detail"]
 
-    def test_invalid_email_format_returns_422(self, client: TestClient):
-        """異常系: 不正なメールアドレス形式は 422"""
-        response = client.post(
-            "/auth/signup",
-            json={"email": "not-an-email", "password": "password123"},
-        )
-        assert response.status_code == 422
-
-    def test_password_too_short_returns_422(self, client: TestClient):
-        """異常系: パスワードが 8 文字未満は 422"""
-        response = client.post(
-            "/auth/signup",
-            json={"email": "test@example.com", "password": "short"},
-        )
-        assert response.status_code == 422
-
-    def test_missing_email_returns_422(self, client: TestClient):
-        """異常系: email フィールドが欠落すると 422"""
-        response = client.post(
-            "/auth/signup", json={"password": "password123"})
-        assert response.status_code == 422
-
-    def test_missing_password_returns_422(self, client: TestClient):
-        """異常系: password フィールドが欠落すると 422"""
-        response = client.post(
-            "/auth/signup", json={"email": "test@example.com"})
-        assert response.status_code == 422
-
-    def test_empty_body_returns_422(self, client: TestClient):
-        """異常系: ボディが空のリクエストは 422"""
-        response = client.post("/auth/signup", json={})
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            {"email": "not-an-email", "password": "password123"},
+            {"email": "test@example.com", "password": "short"},
+            {"password": "password123"},
+            {"email": "test@example.com"},
+            {},
+        ],
+        ids=[
+            "invalid_email",
+            "password_too_short",
+            "missing_email",
+            "missing_password",
+            "empty_body",
+        ],
+    )
+    def test_invalid_input_returns_422(self, client: TestClient, payload: dict):
+        """異常系: バリデーションエラーは 422"""
+        response = client.post("/auth/signup", json=payload)
         assert response.status_code == 422
 
 
@@ -77,14 +67,14 @@ class TestSignUp:
 
 
 class TestSignIn:
-    def test_success_returns_token(self, client: TestClient, registered_user: dict):
+    def test_success_returns_jwt(self, client: TestClient, registered_user: dict):
         """正常系: 正しい認証情報で JWT トークンが返る"""
         response = client.post("/auth/signin", json=registered_user)
         assert response.status_code == 200
         data = response.json()
-        assert "access_token" in data
         assert data["token_type"] == "bearer"
-        assert len(data["access_token"]) > 0
+        # JWT は header.payload.signature の 3 パートで構成される
+        assert len(data["access_token"].split(".")) == 3
 
     def test_wrong_password_returns_401(
         self, client: TestClient, registered_user: dict
@@ -92,8 +82,7 @@ class TestSignIn:
         """異常系: パスワードが間違っていると 401"""
         response = client.post(
             "/auth/signin",
-            json={"email": registered_user["email"],
-                  "password": "wrongpassword"},
+            json={"email": registered_user["email"], "password": "wrongpassword"},
         )
         assert response.status_code == 401
         assert "Invalid email or password" in response.json()["detail"]
@@ -106,33 +95,29 @@ class TestSignIn:
         )
         assert response.status_code == 401
 
-    def test_invalid_email_format_returns_422(self, client: TestClient):
-        """異常系: 不正なメールアドレス形式は 422"""
-        response = client.post(
-            "/auth/signin",
-            json={"email": "notanemail", "password": "password123"},
-        )
-        assert response.status_code == 422
-
-    def test_inactive_user_returns_403(self, client: TestClient, db_session):
+    def test_inactive_user_returns_403(self, client: TestClient, inactive_user: User):
         """異常系: 無効化されたアカウントでサインインすると 403"""
-        from models import User
-        from security import get_password_hash
-
-        user = User(
-            email="inactive@example.com",
-            hashed_password=get_password_hash("password123"),
-            is_active=False,
-        )
-        db_session.add(user)
-        db_session.commit()
-
         response = client.post(
             "/auth/signin",
-            json={"email": "inactive@example.com", "password": "password123"},
+            json={"email": inactive_user.email, "password": "password123"},
         )
         assert response.status_code == 403
         assert "inactive" in response.json()["detail"].lower()
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            {"email": "notanemail", "password": "password123"},
+            {"password": "password123"},
+            {"email": "test@example.com"},
+            {},
+        ],
+        ids=["invalid_email", "missing_email", "missing_password", "empty_body"],
+    )
+    def test_invalid_input_returns_422(self, client: TestClient, payload: dict):
+        """異常系: バリデーションエラーは 422"""
+        response = client.post("/auth/signin", json=payload)
+        assert response.status_code == 422
 
 
 # ---------------------------------------------------------------------------

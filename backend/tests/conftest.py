@@ -6,6 +6,8 @@ from sqlalchemy.pool import StaticPool
 
 from database import Base, get_db
 from main import app
+from models import User
+from security import get_password_hash
 
 
 @pytest.fixture()
@@ -61,3 +63,17 @@ def auth_headers(client, registered_user) -> dict:
     response = client.post("/auth/signin", json=registered_user)
     token = response.json()["access_token"]
     return {"Authorization": f"Bearer {token}"}
+
+
+@pytest.fixture()
+def inactive_user(db_session) -> User:
+    """is_active=False のユーザーを DB に作成して返す"""
+    user = User(
+        email="inactive@example.com",
+        hashed_password=get_password_hash("password123"),
+        is_active=False,
+    )
+    db_session.add(user)
+    db_session.commit()
+    db_session.refresh(user)
+    return user
